@@ -195,6 +195,20 @@ section{
     padding:50px 5%;
 }
 
+.price-notice{
+    width:90%;
+    margin:8px auto 0;
+    background:rgba(255,255,255,.78);
+    border:1px solid rgba(217,108,143,.16);
+    border-radius:18px;
+    color:var(--text-light);
+    font-size:14px;
+    font-weight:600;
+    line-height:1.5;
+    padding:14px 20px;
+    text-align:center;
+}
+
 .section-header{
     display:flex;
     justify-content:space-between;
@@ -896,6 +910,14 @@ footer{
 
     section{
         padding:30px 4%;
+    }
+
+    .price-notice{
+        width:92%;
+        margin-top:4px;
+        border-radius:14px;
+        font-size:12px;
+        padding:12px 14px;
     }
 
     .section-header h2{
