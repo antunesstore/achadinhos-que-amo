@@ -2,6 +2,7 @@ const STORAGE_KEY = "achadinhos_admin_products_v1";
 const AUTH_KEY = "achadinhos_admin_logged";
 const ADMIN_LOGIN = "janana25";
 const ADMIN_EMAIL_DOMAIN = "admin.achadinhos.local";
+const PRODUCTS_PAGE_SIZE = 20;
 const CATEGORIES = [
   "Moda",
   "Infantil & Bebê",
@@ -89,6 +90,15 @@ function slugify(text) {
     .slice(0, 48);
 }
 
+function debounce(callback, delay = 300) {
+  let timer;
+
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => callback(...args), delay);
+  };
+}
+
 function inferCategory(tag, title = "") {
   const text = normalize(`${tag} ${title}`);
   if (text.includes("bebe") || text.includes("infantil") || text.includes("mamadeira") || text.includes("meia 3d")) {
@@ -140,21 +150,99 @@ function saveProducts(products) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
 }
 
-async function fetchProducts(defaultProducts = []) {
-  if (!db) return loadProducts(defaultProducts);
+function filterLocalProducts(products, { category = "all", searchTerm = "" } = {}) {
+  const term = normalize(searchTerm);
 
-  const { data, error } = await db
+  return products.filter((product) => {
+    const productCategory = product.category || product.tag || "";
+    const matchesCategory = category === "all" || productCategory === category;
+    const searchable = `${product.title} ${productCategory} ${product.marketplace}`;
+    const matchesSearch = !term || normalize(searchable).includes(term);
+    return matchesCategory && matchesSearch;
+  });
+}
+
+function getSupabaseSearchFilter(searchTerm) {
+  const term = String(searchTerm || "")
+    .replace(/[%*,()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!term) return "";
+
+  return [
+    `title.ilike.%${term}%`,
+    `category.ilike.%${term}%`,
+    `marketplace.ilike.%${term}%`,
+  ].join(",");
+}
+
+function applyProductQueryFilters(query, { category = "all", searchTerm = "" } = {}) {
+  let nextQuery = query;
+
+  if (category !== "all") {
+    nextQuery = nextQuery.eq("category", category);
+  }
+
+  const searchFilter = getSupabaseSearchFilter(searchTerm);
+  if (searchFilter) {
+    nextQuery = nextQuery.or(searchFilter);
+  }
+
+  return nextQuery;
+}
+
+async function fetchProductPage({
+  offset = 0,
+  limit = PRODUCTS_PAGE_SIZE,
+  category = "all",
+  searchTerm = "",
+  defaultProducts = [],
+} = {}) {
+  if (!db) {
+    const filteredProducts = filterLocalProducts(loadProducts(defaultProducts), { category, searchTerm });
+    const products = filteredProducts.slice(offset, offset + limit);
+
+    return {
+      products,
+      hasMore: offset + products.length < filteredProducts.length,
+      total: filteredProducts.length,
+    };
+  }
+
+  // Supabase usa range para aplicar offset + limit sem baixar todos os produtos.
+  const query = applyProductQueryFilters(
+    db
     .from("products")
-    .select("*")
+      .select("*", { count: "exact" }),
+    { category, searchTerm }
+  );
+
+  const { data, error, count } = await query
     .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
 
   if (error) {
     console.error("Erro ao carregar produtos:", error.message);
-    return loadProducts(defaultProducts);
+    const filteredProducts = filterLocalProducts(loadProducts(defaultProducts), { category, searchTerm });
+    const products = filteredProducts.slice(offset, offset + limit);
+
+    return {
+      products,
+      hasMore: offset + products.length < filteredProducts.length,
+      total: filteredProducts.length,
+    };
   }
 
-  return data.map(fromDbProduct);
+  const products = data.map(fromDbProduct);
+  const knownTotal = typeof count === "number" ? count : offset + products.length;
+
+  return {
+    products,
+    hasMore: offset + products.length < knownTotal,
+    total: count,
+  };
 }
 
 async function seedProductsIfEmpty(defaultProducts) {
@@ -210,40 +298,83 @@ async function initMainPage() {
 
   const filterButtons = document.querySelectorAll(".filter-btn");
   const searchInput = document.getElementById("searchInput");
+  const loadMoreWrap = document.createElement("div");
+  const loadMoreButton = document.createElement("button");
   const defaultProducts = getDefaultProducts();
   if (!localStorage.getItem(STORAGE_KEY)) saveProducts(defaultProducts);
   await seedProductsIfEmpty(defaultProducts);
-  const products = await fetchProducts(defaultProducts);
+
+  loadMoreWrap.className = "load-more-wrap";
+  loadMoreButton.className = "load-more-btn";
+  loadMoreButton.type = "button";
+  loadMoreButton.textContent = "Ver mais produtos";
+  loadMoreWrap.appendChild(loadMoreButton);
+  grid.after(loadMoreWrap);
+
   let activeFilter = "all";
   let searchTerm = "";
+  let currentOffset = 0;
+  let isLoading = false;
+  let hasMoreProducts = true;
 
-  function renderProducts() {
-    const filtered = products.filter((product) => {
-      const matchesFilter = activeFilter === "all" || product.category === activeFilter;
-      const matchesSearch = normalize(product.title).includes(normalize(searchTerm));
-      return matchesFilter && matchesSearch;
+  function updateLoadMoreButton() {
+    loadMoreButton.hidden = !hasMoreProducts;
+    loadMoreButton.disabled = isLoading;
+    loadMoreButton.textContent = isLoading ? "Carregando..." : "Ver mais produtos";
+  }
+
+  async function loadProductsPage({ reset = false } = {}) {
+    if (isLoading) return;
+
+    if (reset) {
+      currentOffset = 0;
+      hasMoreProducts = true;
+      grid.innerHTML = "";
+    }
+
+    isLoading = true;
+    updateLoadMoreButton();
+
+    const page = await fetchProductPage({
+      offset: currentOffset,
+      limit: PRODUCTS_PAGE_SIZE,
+      category: activeFilter,
+      searchTerm,
+      defaultProducts,
     });
 
-    grid.innerHTML = filtered.length
-      ? filtered.map(productTemplate).join("")
-      : '<div class="empty-products">Nenhum produto encontrado.</div>';
+    if (reset) grid.innerHTML = "";
+
+    if (page.products.length) {
+      grid.insertAdjacentHTML("beforeend", page.products.map(productTemplate).join(""));
+      currentOffset += page.products.length;
+    } else if (currentOffset === 0) {
+      grid.innerHTML = '<div class="empty-products">Nenhum produto encontrado.</div>';
+    }
+
+    hasMoreProducts = page.hasMore;
+    isLoading = false;
+    updateLoadMoreButton();
   }
 
   filterButtons.forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       filterButtons.forEach((btn) => btn.classList.remove("active"));
       button.classList.add("active");
       activeFilter = button.dataset.filter;
-      renderProducts();
+      await loadProductsPage({ reset: true });
     });
   });
 
-  searchInput?.addEventListener("keyup", () => {
+  const handleSearch = debounce(async () => {
     searchTerm = searchInput.value;
-    renderProducts();
-  });
+    await loadProductsPage({ reset: true });
+  }, 300);
 
-  renderProducts();
+  searchInput?.addEventListener("input", handleSearch);
+  loadMoreButton.addEventListener("click", () => loadProductsPage());
+
+  await loadProductsPage({ reset: true });
 }
 
 function isAdminLogged() {
@@ -266,6 +397,10 @@ async function initAdminPage() {
   if (!adminApp) return;
 
   let products = [];
+  let adminSearchTerm = "";
+  let adminOffset = 0;
+  let adminHasMoreProducts = true;
+  let adminIsLoading = false;
 
   function renderLogin(message = "") {
     adminApp.innerHTML = `
@@ -359,9 +494,9 @@ async function initAdminPage() {
 
   function renderList() {
     const list = document.querySelector("#adminProductsList");
-    document.querySelector("#adminTotal").textContent = `${products.length} produto${products.length === 1 ? "" : "s"}`;
+    document.querySelector("#adminTotal").textContent = `${products.length} produto${products.length === 1 ? "" : "s"} carregado${products.length === 1 ? "" : "s"}`;
 
-    list.innerHTML = products.map((product) => `
+    list.innerHTML = products.length ? products.map((product) => `
       <article class="admin-product-item" data-id="${escapeHtml(product.id)}">
         <img src="${escapeHtml(product.image)}" alt="${escapeHtml(product.title)}">
         <div>
@@ -373,15 +508,48 @@ async function initAdminPage() {
           <button type="button" data-action="delete" class="danger">Excluir</button>
         </div>
       </article>
-    `).join("");
+    `).join("") : '<div class="admin-empty-products">Nenhum produto encontrado.</div>';
+
+    updateAdminLoadMoreButton();
   }
 
-  async function loadAdminProducts() {
-    products = await fetchProducts([]);
+  function updateAdminLoadMoreButton() {
+    const button = document.querySelector("#loadMoreAdminProducts");
+    if (!button) return;
+
+    button.hidden = !adminHasMoreProducts;
+    button.disabled = adminIsLoading;
+    button.textContent = adminIsLoading ? "Carregando..." : "Ver mais produtos";
+  }
+
+  async function loadAdminProducts({ reset = false } = {}) {
+    if (adminIsLoading) return;
+
+    if (reset) {
+      products = [];
+      adminOffset = 0;
+      adminHasMoreProducts = true;
+    }
+
+    adminIsLoading = true;
+    updateAdminLoadMoreButton();
+
+    const page = await fetchProductPage({
+      offset: adminOffset,
+      limit: PRODUCTS_PAGE_SIZE,
+      searchTerm: adminSearchTerm,
+      defaultProducts: [],
+    });
+
+    products = reset ? page.products : [...products, ...page.products];
+    adminOffset += page.products.length;
+    adminHasMoreProducts = page.hasMore;
+    adminIsLoading = false;
   }
 
   async function renderPanel() {
-    await loadAdminProducts();
+    adminSearchTerm = "";
+    await loadAdminProducts({ reset: true });
     const categoryOptions = CATEGORIES.map((category) => `<option>${escapeHtml(category)}</option>`).join("");
 
     adminApp.innerHTML = `
@@ -430,7 +598,14 @@ async function initAdminPage() {
             <h2>Produtos cadastrados</h2>
             <span id="adminTotal"></span>
           </div>
+          <label class="admin-search-field">
+            Buscar produto
+            <input id="adminProductSearch" type="search" placeholder="Título, categoria ou marketplace">
+          </label>
           <div id="adminProductsList" class="admin-products-list"></div>
+          <div class="admin-products-footer">
+            <button type="button" id="loadMoreAdminProducts">Ver mais produtos</button>
+          </div>
         </section>
       </main>
     `;
@@ -442,6 +617,17 @@ async function initAdminPage() {
     });
 
     document.querySelector("#clearForm").addEventListener("click", resetForm);
+
+    document.querySelector("#loadMoreAdminProducts").addEventListener("click", async () => {
+      await loadAdminProducts();
+      renderList();
+    });
+
+    document.querySelector("#adminProductSearch").addEventListener("input", debounce(async (event) => {
+      adminSearchTerm = event.target.value;
+      await loadAdminProducts({ reset: true });
+      renderList();
+    }, 300));
 
     document.querySelector("#productForm").addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -459,7 +645,7 @@ async function initAdminPage() {
           return;
         }
 
-        await loadAdminProducts();
+        await loadAdminProducts({ reset: true });
       } else {
         if (index >= 0) products[index] = product;
         else products = [product, ...products];
@@ -486,7 +672,7 @@ async function initAdminPage() {
             alert(`Erro ao excluir: ${error.message}`);
             return;
           }
-          await loadAdminProducts();
+          await loadAdminProducts({ reset: true });
         } else {
           products = products.filter((item) => item.id !== id);
           saveProducts(products);

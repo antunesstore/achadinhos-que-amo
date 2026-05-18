@@ -497,6 +497,38 @@ footer{
     text-align:center;
     color:var(--text-light);
 }
+
+.load-more-wrap{
+    display:flex;
+    justify-content:center;
+    margin-top:32px;
+}
+
+.load-more-btn,
+.admin-products-footer button{
+    border:none;
+    cursor:pointer;
+    color:white;
+    background:linear-gradient(45deg,var(--primary),var(--secondary));
+    padding:14px 28px;
+    border-radius:50px;
+    font-weight:800;
+    transition:.3s;
+}
+
+.load-more-btn:hover,
+.admin-products-footer button:hover{
+    transform:translateY(-3px);
+    box-shadow:0 12px 28px rgba(217,108,143,.18);
+}
+
+.load-more-btn:disabled,
+.admin-products-footer button:disabled{
+    cursor:wait;
+    opacity:.72;
+    transform:none;
+    box-shadow:none;
+}
 .admin-body{
     min-height:100vh;
     background:linear-gradient(135deg,var(--bg),var(--bege));
@@ -712,6 +744,30 @@ footer{
     font-weight:800;
 }
 
+.admin-search-field{
+    display:grid;
+    gap:8px;
+    color:var(--marrom);
+    font-size:14px;
+    font-weight:700;
+    margin-bottom:18px;
+}
+
+.admin-search-field input{
+    width:100%;
+    border:1px solid rgba(139,94,75,.16);
+    background:var(--bege);
+    color:var(--text);
+    border-radius:16px;
+    padding:14px 16px;
+    outline:none;
+}
+
+.admin-search-field input:focus{
+    border-color:var(--primary);
+    background:white;
+}
+
 .admin-products-list{
     display:grid;
     gap:12px;
@@ -765,6 +821,21 @@ footer{
 
 .admin-item-actions .danger{
     background:var(--danger);
+}
+
+.admin-products-footer{
+    display:flex;
+    justify-content:center;
+    margin-top:18px;
+}
+
+.admin-empty-products{
+    background:var(--bg);
+    border:1px solid rgba(139,94,75,.12);
+    border-radius:20px;
+    color:var(--text-light);
+    padding:24px;
+    text-align:center;
 }
 @media(max-width:900px){
 
@@ -886,6 +957,11 @@ footer{
         border-radius:12px;
     }
 
+    .load-more-btn,
+    .admin-products-footer button{
+        width:100%;
+    }
+
     .discount{
         font-size:10px;
         padding:5px 10px;
@@ -973,4 +1049,3 @@ footer{
     }
 
 }
-
