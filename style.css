@@ -708,6 +708,7 @@ footer{
 .admin-panel-page{
     display:grid;
     grid-template-columns:minmax(0,1fr) minmax(320px,.9fr);
+    align-items:start;
     gap:25px;
     padding:35px 5%;
 }
@@ -723,7 +724,13 @@ footer{
 .admin-product-form{
     display:grid;
     grid-template-columns:1fr 1fr;
+    align-content:start;
+    align-self:start;
     gap:18px;
+}
+
+.admin-product-form label{
+    align-content:start;
 }
 
 .admin-product-form h2,
